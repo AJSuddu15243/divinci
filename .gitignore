@@ -1,0 +1,16 @@
+# local helper script — keep out of the repo
+ship.sh
+
+# local multi-agent coordination and shared memory
+.agent/
+
+# macOS noise
+.DS_Store
+
+# python bytecode
+__pycache__/
+
+node_modules/
+
+# downloaded corpus
+data/

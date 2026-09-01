@@ -1,0 +1,19 @@
+{
+  "name": "divinci",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "gate": "node scripts/gate.js"
+  },
+  "dependencies": {
+    "acorn": "8.15.0",
+    "acorn-walk": "8.3.4",
+    "p5": "2.2.0",
+    "p5.brush": "2.2.2",
+    "puppeteer": "25.9.0"
+  }
+}
