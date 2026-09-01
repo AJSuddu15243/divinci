@@ -3,6 +3,7 @@ ship.sh
 
 # local multi-agent coordination and shared memory
 .agent/
+AGENTS.md
 
 # macOS noise
 .DS_Store
