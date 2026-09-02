@@ -361,8 +361,6 @@ const FORBIDDEN_NODES = new Map([
 ]);
 
 const BRUSH_SET = new Set(BRUSH_FUNCTIONS);
-const P5_FUNCTION_SET = new Set(P5_FUNCTIONS);
-const P5_VALUE_SET = new Set(P5_VALUES);
 const CAPABILITY_NAMES = new Set([...P5_FUNCTIONS, ...P5_VALUES, "brush", ...SAFE_GLOBALS]);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(SCRIPT_DIR, "..");
@@ -442,14 +440,9 @@ export function validateProgram(code) {
     };
   }
   let nodeCount = 0;
-  walk.full(ast, () => {
-    nodeCount += 1;
-  });
-  if (nodeCount > AST_LIMIT) {
-    return { valid: false, diagnostics: [diagnostic("input", "AST_LIMIT", `program exceeds ${AST_LIMIT} syntax nodes`)] };
-  }
   const declared = new Set();
   walk.full(ast, node => {
+    nodeCount += 1;
     if (node.type === "VariableDeclarator") patternNames(node.id, declared);
     if (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") {
       if (node.id) declared.add(node.id.name);
@@ -457,6 +450,9 @@ export function validateProgram(code) {
     }
     if (node.type === "CatchClause") patternNames(node.param, declared);
   });
+  if (nodeCount > AST_LIMIT) {
+    return { valid: false, diagnostics: [diagnostic("input", "AST_LIMIT", `program exceeds ${AST_LIMIT} syntax nodes`)] };
+  }
   const diagnostics = [];
   for (const name of declared) {
     if (CAPABILITY_NAMES.has(name) || FORBIDDEN_IDENTIFIERS.has(name)) {
@@ -516,11 +512,10 @@ export function validateProgram(code) {
       unique.push(item);
     }
   }
-  return { valid: unique.length === 0, diagnostics: unique };
+  return { valid: unique.length === 0, diagnostics: unique, ast };
 }
 
-function instrumentProgram(code) {
-  const ast = parse(code, { ecmaVersion: 2022, sourceType: "script" });
+function instrumentProgram(code, ast) {
   const insertions = new Map();
   const add = (position, text) => {
     const values = insertions.get(position) ?? [];
@@ -580,16 +575,17 @@ async function createPage(browser) {
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on("request", request => request.abort());
+  const sources = await getRuntimeSources();
+  await page.setContent(PAGE_HTML, { waitUntil: "domcontentloaded" });
+  await page.addStyleTag({ content: "html,body{margin:0;padding:0;overflow:hidden;background:#fff}canvas{display:block}" });
+  await page.addScriptTag({ content: sources.p5 });
   return page;
 }
 
 async function preparePage(page, width, height) {
   const sources = await getRuntimeSources();
   await page.setViewport({ width, height, deviceScaleFactor: 1 });
-  await page.setContent(PAGE_HTML, { waitUntil: "domcontentloaded" });
-  await page.addStyleTag({ content: "html,body{margin:0;padding:0;overflow:hidden;background:#fff}canvas{display:block}" });
-  await page.addScriptTag({ content: sources.p5 });
-  await page.addScriptTag({ content: sources.brush });
+  await page.evaluate(sources.brush);
 }
 
 async function terminatePage(page) {
@@ -617,15 +613,15 @@ async function withTimeout(promise, milliseconds) {
 
 async function executeProgram(page, request, seed) {
   return page.evaluate(async payload => {
+    window.__gateInstance?.remove();
     window.__gateFailure = null;
-    window.__gateDone = false;
     window.__gateBudgetExceeded = false;
-    window.addEventListener("error", event => {
-      window.__gateFailure ??= event.error?.message ?? event.message ?? "page error";
-    });
-    window.addEventListener("unhandledrejection", event => {
+    window.onerror = (message, _source, _line, _column, error) => {
+      window.__gateFailure ??= error?.message ?? message ?? "page error";
+    };
+    window.onunhandledrejection = event => {
       window.__gateFailure ??= event.reason?.message ?? String(event.reason);
-    });
+    };
     const brushes = new Set(payload.brushNames);
     const fields = new Set(payload.fieldNames);
     const allowedBrushFunctions = new Set(payload.brushFunctions);
@@ -690,12 +686,11 @@ async function executeProgram(page, request, seed) {
           } catch (error) {
             window.__gateFailure = error instanceof Error ? error.message : String(error);
           } finally {
-            window.__gateDone = true;
             resolve();
           }
         };
       };
-      instance = new window.p5(sketch);
+      instance = window.__gateInstance = new window.p5(sketch);
     });
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const gl = instance?._renderer?.drawingContext;
@@ -778,14 +773,13 @@ export async function createGateWorker(browser, artifactDir = join(tmpdir(), "di
       const validation = validateProgram(request.code);
       if (!validation.valid) return { id, key, valid: false, image: null, render_ms: performance.now() - started, diagnostics: validation.diagnostics };
       const seed = seedFor(request.key);
-      const instrumentedCode = instrumentProgram(request.code);
+      const instrumentedCode = instrumentProgram(request.code, validation.ast);
       let activePage;
       try {
         activePage = await ensurePage();
         await preparePage(activePage, request.width, request.height);
         const execution = await withTimeout(executeProgram(activePage, { ...request, instrumentedCode }, seed), TIMEOUT_MS);
         if (execution.failure) {
-          await replacePage();
           return {
             id,
             key,
