@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
@@ -20,7 +21,7 @@ import {
   validateRequest
 } from "./gate.js";
 
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 3_000;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(SCRIPT_DIR, "..");
 const P5_PATH = resolve(ROOT_DIR, "node_modules/p5/lib/p5.min.js");
@@ -68,6 +69,14 @@ async function withTimeout(promise, milliseconds) {
     return await Promise.race([promise, timeout]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function closeBrowser(browser) {
+  try {
+    await withTimeout(browser.close(), 2_000);
+  } catch {
+    browser.process()?.kill("SIGKILL");
   }
 }
 
@@ -294,11 +303,78 @@ export async function createGateWorker(browser, artifactDir = join(tmpdir(), "di
   };
 }
 
+export async function createGatePool(size = 4, artifactDir = join(tmpdir(), "divinci-gate"), options = {}) {
+  const count = Math.max(1, Math.floor(size));
+  const entries = [];
+  for (let index = 0; index < count; index += 1) {
+    const browser = await launchBrowser(options);
+    entries.push({ browser, worker: await createGateWorker(browser, artifactDir) });
+  }
+  const free = [...entries];
+  const waiting = [];
+  let closed = false;
+  function acquire() {
+    if (free.length) return Promise.resolve(free.pop());
+    return new Promise(resolve => waiting.push(resolve));
+  }
+  function release(entry) {
+    const next = waiting.shift();
+    if (next) next(entry);
+    else free.push(entry);
+  }
+  return {
+    size: count,
+    artifactDir: entries[0].worker.artifactDir,
+    async render(request) {
+      if (closed) return { id: request?.id ?? null, key: request?.key ?? null, valid: false, image: null, render_ms: 0, diagnostics: [diagnostic("input", "POOL_CLOSED", "pool is closed")] };
+      const entry = await acquire();
+      try {
+        return await entry.worker.render(request);
+      } finally {
+        release(entry);
+      }
+    },
+    async close() {
+      closed = true;
+      for (const entry of entries) {
+        await entry.worker.close();
+        await closeBrowser(entry.browser);
+      }
+    }
+  };
+}
+
+async function serve(poolSize, artifactDir) {
+  const pool = await createGatePool(poolSize, artifactDir);
+  process.stdout.write(`${JSON.stringify({ ready: true, pool: pool.size, artifact_dir: pool.artifactDir })}\n`);
+  const pending = new Set();
+  const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of input) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let request;
+    try {
+      request = JSON.parse(trimmed);
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify({ id: null, key: null, valid: false, image: null, render_ms: 0, diagnostics: [diagnostic("input", "MALFORMED_REQUEST", error.message)] })}\n`);
+      continue;
+    }
+    const task = pool.render(request).then(result => {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    });
+    pending.add(task);
+    task.finally(() => pending.delete(task));
+  }
+  await Promise.all(pending);
+  await pool.close();
+}
+
 function parseCli(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--api") result.api = true;
+    else if (argument === "--serve") result.serve = true;
     else if (argument.startsWith("--")) {
       result[argument.slice(2)] = argv[index + 1];
       index += 1;
@@ -313,8 +389,12 @@ async function main() {
     process.stdout.write(`${JSON.stringify(apiDescription(), null, 2)}\n`);
     return;
   }
+  if (args.serve) {
+    await serve(Number(args.pool ?? 4), args.out ?? join(tmpdir(), "divinci-gate"));
+    return;
+  }
   if (!args.code || !args.key || !args.width || !args.height) {
-    process.stderr.write("usage: node scripts/gate_server.js --code FILE --key KEY --width N --height N [--out DIR]\n");
+    process.stderr.write("usage: node scripts/gate_server.js --code FILE --key KEY --width N --height N [--out DIR]\n   or: node scripts/gate_server.js --serve [--pool N] [--out DIR]\n");
     process.exitCode = 2;
     return;
   }
@@ -332,7 +412,7 @@ async function main() {
     if (!result.valid) process.exitCode = 1;
   } finally {
     await worker.close();
-    await browser.close();
+    await closeBrowser(browser);
   }
 }
 
