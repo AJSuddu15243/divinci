@@ -499,7 +499,7 @@ export function validateProgram(code) {
       unique.push(item);
     }
   }
-  return { valid: unique.length === 0, diagnostics: unique, ast };
+  return { valid: unique.length === 0, diagnostics: unique, ast, size: { bytes: Buffer.byteLength(code, "utf8"), nodes: nodeCount, byte_limit: SOURCE_LIMIT, node_limit: AST_LIMIT } };
 }
 
 export function instrumentProgram(code, ast) {

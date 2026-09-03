@@ -266,6 +266,7 @@ export async function createGateWorker(browser, artifactDir = join(tmpdir(), "di
           key,
           valid: true,
           image: { path, width: request.width, height: request.height, sha256 },
+          size: validation.size,
           seed,
           render_ms: performance.now() - started,
           diagnostics: []
