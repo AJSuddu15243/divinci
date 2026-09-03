@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "gate": "node scripts/gate.js"
+    "gate": "node scripts/gate_server.js"
   },
   "dependencies": {
     "acorn": "8.15.0",
