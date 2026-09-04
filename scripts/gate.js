@@ -558,6 +558,12 @@ export function apiDescription() {
     p5_values: P5_VALUES,
     brush_functions: BRUSH_FUNCTIONS,
     brush_names: BRUSH_NAMES,
-    field_names: FIELD_NAMES
+    field_names: FIELD_NAMES,
+    globals: [...SAFE_GLOBALS].sort(),
+    math_properties: [...MATH_PROPERTIES].sort(),
+    methods: [...SAFE_METHODS].sort(),
+    forbidden_identifiers: [...FORBIDDEN_IDENTIFIERS].sort(),
+    forbidden_syntax: [...new Set(FORBIDDEN_NODES.values())].sort(),
+    limits: { source_bytes: SOURCE_LIMIT, ast_nodes: AST_LIMIT }
   };
 }
