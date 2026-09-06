@@ -62,7 +62,7 @@ def build(row: dict, api_spec: dict | None = None) -> list[dict]:
     return [
         {"role": "system", "content": [{"type": "text", "text": system_message(api_spec)}]},
         {"role": "user", "content": [
-            {"type": "image", "image": str(Path(row["path"]).resolve())},
+            {"type": "image", "image": Path(row["path"]).resolve().as_uri()},
             {"type": "text", "text": f"Reproduce this painting. The canvas is {row['width']}x{row['height']} pixels."},
         ]},
     ]
