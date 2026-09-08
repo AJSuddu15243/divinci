@@ -61,6 +61,7 @@ def main() -> None:
     parser.add_argument("--split", default="train")
     parser.add_argument("--model", default=TEACHER)
     parser.add_argument("--renderer")
+    parser.add_argument("--model-path")
     parser.add_argument("--temperature", type=float, default=TEMPERATURE)
     parser.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
     parser.add_argument("--group", type=int, default=GROUP)
@@ -82,7 +83,7 @@ def main() -> None:
         rows = rows[: args.count]
     anchors = load_anchors()
     spec = prompts.spec()
-    sample = sampler(args.model, args.renderer, args.temperature, args.max_tokens)
+    sample = sampler(args.model, args.renderer, args.temperature, args.max_tokens, args.model_path)
     deadline = time.monotonic() + args.hours * 3600 if args.hours else None
     started = time.monotonic()
     attempts = kept = 0

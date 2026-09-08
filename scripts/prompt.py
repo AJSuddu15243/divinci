@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -47,7 +48,7 @@ def system_message(api_spec: dict | None = None) -> str:
         listing("Math properties", api_spec["math_properties"]),
         listing("methods on arrays, strings and numbers", api_spec["methods"]),
         "",
-        "p5.brush is a namespace, so every brush call is written brush.name(...), never bare and never brush[name].",
+        "p5.brush is a namespace, so every brush call is written brush.name(...), never bare and never brush[name]. The p5 functions above are the opposite: call them bare, never prefixed with brush. brush.ellipse, brush.point and brush.bezierVertex do not exist.",
         listing("brush functions", api_spec["brush_functions"]),
         listing("brush names for brush.set", api_spec["brush_names"]),
         listing("field names for brush.field", api_spec["field_names"]),
@@ -70,13 +71,8 @@ def build(row: dict, api_spec: dict | None = None) -> list[dict]:
 
 def extract(completion: str) -> str:
     text = completion.strip()
-    if not text.startswith(FENCE):
-        return text
-    body = text[len(FENCE):]
-    newline = body.find("\n")
-    body = body[newline + 1:] if newline != -1 else ""
-    end = body.rfind(FENCE)
-    return (body[:end] if end != -1 else body).strip()
+    blocks = re.findall(rf"{FENCE}[^\n]*\n(.*?){FENCE}", text, re.S)
+    return max(blocks, key=len).strip() if blocks else text
 
 
 def rows(manifest_path: str | Path = MANIFEST_PATH):

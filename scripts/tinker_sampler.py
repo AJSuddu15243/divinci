@@ -21,7 +21,7 @@ import prompt as prompts
 
 ENV_PATH = Path(".env")
 MODEL = "Qwen/Qwen3.5-9B"
-MAX_TOKENS = 8192
+MAX_TOKENS = 16384
 TEMPERATURE = 1.0
 
 
@@ -43,10 +43,11 @@ def renderer_for(model: str, name: str | None = None):
     return renderers.get_renderer(name, get_tokenizer(model), get_image_processor(model), model_name=model)
 
 
-def sampler(model: str = MODEL, renderer_name: str | None = None, temperature: float = TEMPERATURE, max_tokens: int = MAX_TOKENS):
+def sampler(model: str = MODEL, renderer_name: str | None = None, temperature: float = TEMPERATURE, max_tokens: int = MAX_TOKENS, model_path: str | None = None):
     load_env()
     renderer = renderer_for(model, renderer_name)
-    client = tinker.ServiceClient().create_sampling_client(base_model=model)
+    service = tinker.ServiceClient()
+    client = service.create_sampling_client(model_path=model_path) if model_path else service.create_sampling_client(base_model=model)
     params = tinker.SamplingParams(max_tokens=max_tokens, temperature=temperature, stop=renderer.get_stop_sequences())
 
     def sample(batch: list[list[dict]]) -> list[str]:
@@ -70,13 +71,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--renderer")
+    parser.add_argument("--model-path")
     parser.add_argument("--key")
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=TEMPERATURE)
     parser.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
     args = parser.parse_args()
     row = prompts.row_for(args.key) if args.key else next(prompts.rows())
-    sample = sampler(args.model, args.renderer, args.temperature, args.max_tokens)
+    sample = sampler(args.model, args.renderer, args.temperature, args.max_tokens, args.model_path)
     for completion in sample([prompts.build(row)] * args.samples):
         print(json.dumps({"key": row["key"], "code": prompts.extract(completion)}, separators=(",", ":")))
 

@@ -57,7 +57,11 @@ class Gate:
     def close(self) -> None:
         if self.process.poll() is None:
             self.process.stdin.close()
-            self.process.wait()
+            try:
+                self.process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
 
     def __enter__(self) -> "Gate":
         return self

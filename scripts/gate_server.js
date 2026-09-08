@@ -328,6 +328,12 @@ export async function createGatePool(size = 4, artifactDir = join(tmpdir(), "div
     async render(request) {
       if (closed) return { id: request?.id ?? null, key: request?.key ?? null, valid: false, image: null, render_ms: 0, diagnostics: [diagnostic("input", "POOL_CLOSED", "pool is closed")] };
       const entry = await acquire();
+      if (!entry.browser.connected) {
+        await entry.worker.close().catch(() => {});
+        await closeBrowser(entry.browser).catch(() => {});
+        entry.browser = await launchBrowser(options);
+        entry.worker = await createGateWorker(entry.browser, artifactDir);
+      }
       try {
         return await entry.worker.render(request);
       } finally {

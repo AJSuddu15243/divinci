@@ -21,3 +21,4 @@ data/
 
 # training logs and checkpoints
 runs/
+runs-*.log

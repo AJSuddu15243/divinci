@@ -16,9 +16,9 @@ export const BRUSH_NAMES = Object.freeze([
   "rotring",
   "spray",
   "marker",
-  "marker2",
-  "charcoal",
-  "hatch_brush"
+  "pastel",
+  "crayon",
+  "charcoal"
 ]);
 
 export const FIELD_NAMES = Object.freeze([
