@@ -26,7 +26,9 @@ class Gate:
         if artifact_dir:
             argv += ["--out", artifact_dir]
         self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-        self.results: Queue = Queue()
+        self.pending: dict[str, Queue] = {}
+        self.lock = threading.Lock()
+        self.writing = threading.Lock()
         self.reader = threading.Thread(target=self.pump, daemon=True)
         self.ready = json.loads(self.process.stdout.readline())
         self.reader.start()
@@ -34,25 +36,38 @@ class Gate:
     def pump(self) -> None:
         for line in self.process.stdout:
             line = line.strip()
-            if line:
-                self.results.put(json.loads(line))
+            if not line:
+                continue
+            result = json.loads(line)
+            with self.lock:
+                slot = self.pending.pop(str(result.get("id")), None)
+            if slot is not None:
+                slot.put(result)
 
     def render(self, requests: list[dict]) -> dict:
-        for request in requests:
-            self.process.stdin.write(json.dumps(request, separators=(",", ":")) + "\n")
-        self.process.stdin.flush()
+        slots = {}
+        with self.lock:
+            for request in requests:
+                slot: Queue = Queue()
+                slots[str(request["id"])] = slot
+                self.pending[str(request["id"])] = slot
+        with self.writing:
+            for request in requests:
+                self.process.stdin.write(json.dumps(request, separators=(",", ":")) + "\n")
+            self.process.stdin.flush()
         collected = {}
-        seen = 0
-        while seen < len(requests):
-            try:
-                result = self.results.get(timeout=1)
-            except Empty:
-                if self.process.poll() is not None:
-                    raise RuntimeError(f"renderer exited with code {self.process.returncode} after {seen} of {len(requests)} results")
-                continue
-            collected[result.get("id")] = result
-            seen += 1
-        return collected
+        for identifier, slot in slots.items():
+            while True:
+                try:
+                    collected[identifier] = slot.get(timeout=1)
+                    break
+                except Empty:
+                    if self.process.poll() is not None:
+                        with self.lock:
+                            for key in slots:
+                                self.pending.pop(key, None)
+                        raise RuntimeError(f"renderer exited with code {self.process.returncode} after {len(collected)} of {len(requests)} results")
+        return {result.get("id"): result for result in collected.values()}
 
     def close(self) -> None:
         if self.process.poll() is None:

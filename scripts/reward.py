@@ -18,8 +18,7 @@ from metrics import measure
 WEIGHTS = {"mae": 0.4, "lab": 0.2, "emd": 0.1, "hod": 0.3}
 MDL_LAMBDA = 0.5
 NODE_LIMIT = 20_000
-INVALID_REWARD = -1.0
-NORMALIZED_FLOOR = -1.0
+INVALID_REWARD = -1.5
 MANIFEST_PATH = Path("data/manifest.jsonl")
 ANCHOR_PATH = Path("data/baselines.jsonl")
 
@@ -41,9 +40,13 @@ def anchor_for(target: Image.Image) -> dict:
     return flatten(measure(target, mean_fill(target)))
 
 
+def ratio_score(ratio: float) -> float:
+    return 1.0 - ratio if ratio <= 1.0 else 1.0 / ratio - 1.0
+
+
 def normalize(anchor: dict, raw: dict) -> dict:
     return {
-        name: max(NORMALIZED_FLOOR, (anchor[name] - raw[name]) / anchor[name]) if anchor[name] > 1e-9 else 0.0
+        name: ratio_score(raw[name] / anchor[name]) if anchor[name] > 1e-9 else 0.0
         for name in WEIGHTS
     }
 
