@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
+import sys
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import count
+from pathlib import Path
 
 import chz
 import tinker
@@ -145,6 +148,23 @@ class PaintingDatasetBuilder(RLDatasetBuilder):
         return make(train_rows, self.batch_size), (make(eval_rows, self.batch_size) if eval_rows else None)
 
 
+def last_checkpoint(log_path: str) -> str | None:
+    path = Path(log_path) / "checkpoints.jsonl"
+    if not path.exists():
+        return None
+    records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return records[-1]["state_path"] if records else None
+
+
+def last_eval_fidelity(log_path: str) -> float | None:
+    path = Path(log_path) / "metrics.jsonl"
+    if not path.exists():
+        return None
+    values = [json.loads(line).get("test/env/all/fidelity") for line in path.read_text().splitlines() if line.strip()]
+    values = [value for value in values if value is not None]
+    return values[-1] if values else None
+
+
 def main() -> None:
     load_env()
     parser = argparse.ArgumentParser()
@@ -160,6 +180,8 @@ def main() -> None:
     parser.add_argument("--lora-rank", type=int, default=LORA_RANK)
     parser.add_argument("--pool", type=int, default=POOL_SIZE)
     parser.add_argument("--eval-size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--min-gain", type=float, default=0.02)
     parser.add_argument("--save-every", type=int, default=10)
     parser.add_argument("--eval-every", type=int, default=10)
     parser.add_argument("--kl-penalty-coef", type=float, default=0.0)
@@ -167,31 +189,43 @@ def main() -> None:
     parser.add_argument("--wandb-name")
     args = parser.parse_args()
     renderer_name = args.renderer or get_recommended_renderer_name(args.model)
-    config = train.Config(
-        learning_rate=args.learning_rate,
-        dataset_builder=PaintingDatasetBuilder(
-            manifest=args.manifest,
-            model=args.model,
+    checkpoint = args.load_checkpoint
+    previous = None
+    for epoch in range(1, args.epochs + 1):
+        log_path = str(Path(args.log_path) / f"epoch{epoch}")
+        config = train.Config(
+            learning_rate=args.learning_rate,
+            dataset_builder=PaintingDatasetBuilder(
+                manifest=args.manifest,
+                model=args.model,
+                renderer_name=renderer_name,
+                group_size=args.group_size,
+                batch_size=args.batch_size,
+                pool=args.pool,
+                eval_size=args.eval_size,
+            ),
+            model_name=args.model,
+            recipe_name="divinci_rl",
+            max_tokens=args.max_tokens,
+            log_path=log_path,
+            load_checkpoint_path=checkpoint,
             renderer_name=renderer_name,
-            group_size=args.group_size,
-            batch_size=args.batch_size,
-            pool=args.pool,
-            eval_size=args.eval_size,
-        ),
-        model_name=args.model,
-        recipe_name="divinci_rl",
-        max_tokens=args.max_tokens,
-        log_path=args.log_path,
-        load_checkpoint_path=args.load_checkpoint,
-        renderer_name=renderer_name,
-        lora_rank=args.lora_rank,
-        save_every=args.save_every,
-        eval_every=args.eval_every,
-        kl_penalty_coef=args.kl_penalty_coef,
-        wandb_project=args.wandb_project,
-        wandb_name=args.wandb_name,
-    )
-    asyncio.run(train.main(config))
+            lora_rank=args.lora_rank,
+            save_every=args.save_every,
+            eval_every=args.eval_every,
+            kl_penalty_coef=args.kl_penalty_coef,
+            wandb_project=args.wandb_project,
+            wandb_name=f"{args.wandb_name}-epoch{epoch}" if args.wandb_name else None,
+        )
+        asyncio.run(train.main(config))
+        checkpoint = last_checkpoint(log_path) or checkpoint
+        fidelity = last_eval_fidelity(log_path)
+        gain = None if previous is None or fidelity is None else fidelity - previous
+        print(f"epoch {epoch}/{args.epochs}  eval fidelity {fidelity}  gain {gain}  checkpoint {checkpoint}", file=sys.stderr)
+        if gain is not None and gain < args.min_gain:
+            print(f"stopping: gain {gain:+.4f} is below --min-gain {args.min_gain}", file=sys.stderr)
+            break
+        previous = fidelity
 
 
 if __name__ == "__main__":

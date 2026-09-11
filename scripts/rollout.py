@@ -30,7 +30,10 @@ class Gate:
         self.lock = threading.Lock()
         self.writing = threading.Lock()
         self.reader = threading.Thread(target=self.pump, daemon=True)
-        self.ready = json.loads(self.process.stdout.readline())
+        ready = self.process.stdout.readline()
+        if not ready.strip():
+            raise RuntimeError(f"gate failed to start (exit {self.process.poll()}); if Chrome is missing run: npx puppeteer browsers install chrome")
+        self.ready = json.loads(ready)
         self.reader.start()
 
     def pump(self) -> None:
